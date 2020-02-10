@@ -21,38 +21,50 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sigs.k8s.io/slack-infra/slack/blocks"
+	"sigs.k8s.io/slack-infra/slack/blocks/elements"
+	"sigs.k8s.io/slack-infra/slack/blocks/objects"
 	"strconv"
 
 	"sigs.k8s.io/slack-infra/slack"
 )
 
 func (h *handler) handleReportMessage(interaction slackInteraction, rw http.ResponseWriter) {
-	textArea := slack.TextArea{
-		Name:  "message",
-		Label: "Why are you reporting this message?",
-		Hint:  "Moderators will see whatever you write here, along with the message being reported.",
+	textInput := blocks.Input{
+		BlockID: "message",
+		Label:   objects.PlainText{Text: "Why are you reporting this message?"},
+		Element: elements.PlainTextInput{Multiline: true},
+		Hint:    &objects.PlainText{Text: "Moderators will see whatever you write here, along with the message being reported."},
 	}
-	selectElement := slack.SelectElement{
-		Name:  "anonymous",
-		Label: "Would you like to report anonymously?",
-		Options: []slack.SelectOption{
-			{
-				Label: "No, report with my username",
+
+	anonymityInput := blocks.Input{
+		BlockID: "anonymous",
+		Label:   objects.PlainText{Text: "Would you like to report anonymously?"},
+		Element: elements.StaticSelectMenu{
+			Options: []objects.Option{
+				{
+					Text:  objects.PlainText{Text: "No, report with my username"},
+					Value: "no",
+				},
+				{
+					Text:  objects.PlainText{Text: "Yes, report anonymously"},
+					Value: "yes",
+				},
+			},
+			InitialOption: &objects.Option{
+				Text:  objects.PlainText{Text: "No, report with my username"},
 				Value: "no",
 			},
-			{
-				Label: "Yes, report anonymously",
-				Value: "yes",
-			},
 		},
-		Value: "no",
 	}
-	var elements []interface{}
+
+	var b []blocks.Block
 	if interaction.Channel.Name == "directmessage" {
-		elements = []interface{}{textArea}
+		b = []blocks.Block{textInput}
 	} else {
-		elements = []interface{}{textArea, selectElement}
+		b = []blocks.Block{textInput, anonymityInput}
 	}
+
 	state, err := json.Marshal(dialogState{
 		Sender:  interaction.Message.User,
 		TS:      interaction.Message.Timestamp,
@@ -62,18 +74,19 @@ func (h *handler) handleReportMessage(interaction slackInteraction, rw http.Resp
 		logError(rw, "Failed to serialise state for dialog: %v", err)
 		return
 	}
-	dialog := slack.DialogWrapper{
+	modal := slack.ViewWrapper{
 		TriggerID: interaction.TriggerID,
-		Dialog: slack.Dialog{
-			CallbackID:     "send_report",
-			NotifyOnCancel: false,
-			Title:          "Report Message",
-			Elements:       elements,
-			State:          string(state),
+		View: slack.Modal{
+			CallbackID:      "send_report",
+			ClearOnClose:    true,
+			NotifyOnClose:   false,
+			Title:           objects.PlainText{Text: "Report Message"},
+			Blocks:          b,
+			PrivateMetadata: string(state),
 		},
 	}
-	if err := h.client.CallMethod("dialog.open", dialog, nil); err != nil {
-		logError(rw, "Failed to call dialog.open: %v", err)
+	if err := h.client.CallMethod("views.open", modal, nil); err != nil {
+		logError(rw, "Failed to call views.open: %v", err)
 		return
 	}
 }
